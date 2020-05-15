@@ -3,6 +3,9 @@
 Run `2020CPSChallenge.py` to code to attach and detach an object with a PX4 drone.
 This script will also set mode to Offboard and arm the vehicle.
 
+This script publishes to attach and detach commands, which require the following repository code to be setup and running.
+https://github.com/Open-UAV/gazebo_ros_link_attacher 
+
 
 
 Run `testOffboardPositionControlUnitDiamond.py` to move the drone in a diamond pattern.
