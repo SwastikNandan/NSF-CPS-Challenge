@@ -17,9 +17,3 @@ rosservice call /mavros/cmd/arming "value: true"
 ```
  	
   
-
-Authors:
-
-Jnaneshwar Das
-
-Harish Anand
