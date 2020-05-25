@@ -30,9 +30,8 @@ class OffboardControl:
                             [-1.8, -2.6, 2, 0, 0, 0, 0],
                             ])
        
-    search_loc = [35, 2, 15, 0, 0, 0, 0]
-    drop_loc = [84.79, -54.25, 31, 0, 0, 0, 0]
-    drop_loc1 = [84.79, -54.25, 26, 0, 0, 0, 0]
+    search_loc = [10,-62, 18, 0, 0, 0, 0]
+    drop_loc = [84.79, -54.25, 27, 0, 0, 0, 0]
 
 
     def __init__(self):
@@ -64,7 +63,7 @@ class OffboardControl:
         self.flag = "False"
         self.is_ready_to_fly = False
         self.hover_loc = [self.hover_x, self.hover_y, self.hover_z, 0, 0, 0, 0] # Hovers 3meter above at this location 
-        self.suv_search_loc = [10,-62, 10]
+        self.suv_search_loc = [10,-62, 18]
         self.mode = "FLYTODESTINATION"
         self.phase = "SEARCH"
         self.dist_threshold = 0.4
@@ -96,7 +95,7 @@ class OffboardControl:
     def yolo(self,data):
         for a in data.bounding_boxes:
             
-            if a.Class == "truck" or a.Class == "bus" or a.Class == "SUV" or a.Class =="kite" or a.Class =="tvmonitor" or a.Class=="suitcase" or a.Class=="cell phone":
+            if a.Class == "truck" or a.Class == "bus" or a.Class == "SUV" or a.Class =="kite":
                 
                 self.detection_count = self.detection_count + 1
                 X = a.xmin + (a.xmax - a.xmin)/2
@@ -113,14 +112,14 @@ class OffboardControl:
 
                 relative_coordinates = np.array([[self.truck_target_x1],[self.truck_target_y1], [self.truck_target_z1]])
                 hom_transformation = np.array([[0, 1, 0, 0],[1, 0, 0, 0],[ 0, 0, -1, 0],[0, 0, 0, 1]])
-                homogeneous_coordinates = np.array([[relative_coordinates[0][0]],[relative_coordinates[1][0]],[relative_coordinates[2][0]],[1]])
-                product =  np.matmul(hom_transformation,homogeneous_coordinates)
-                self.truck_target_x = -product[0][0]
-                self.truck_target_y = product[1][0]
-                self.truck_target_z = -product[2][0]
-                #print('X_coordinate_truck',self.truck_target_x)
-                #print('Y_coordinate_truck',self.truck_target_y)
-                #print('Z_coordinate_truck',self.truck_target_z)
+            	homogeneous_coordinates = np.array([[relative_coordinates[0][0]],[relative_coordinates[1][0]],[relative_coordinates[2][0]],[1]])
+            	product =  np.matmul(hom_transformation,homogeneous_coordinates)
+            	self.truck_target_x = -product[0][0]
+                self.truck_target_y = -product[1][0]
+                self.truck_target_z = product[2][0]
+                print('X_coordinate_truck',self.truck_target_x)
+                print('Y_coordinate_truck',self.truck_target_y)
+                print('Z_coordinate_truck',self.truck_target_z)
 
     def depth_image(self,Img):
         self.depth = Img
@@ -317,7 +316,7 @@ class OffboardControl:
         sim_ctr = 1
         #print(self.mode)
         
-        while self.mode == "HOVER" and self.counter <= 70 and not rospy.is_shutdown():
+        while self.mode == "HOVER" and self.counter <= 200 and not rospy.is_shutdown():
             if waypoint_index == 5:
                 waypoint_index = 0
                 sim_ctr += 1
@@ -345,7 +344,7 @@ class OffboardControl:
 
             pose_pub.publish(self.des_pose)
             rate.sleep()
-        if self.counter > 35:
+        if self.counter > 60:
             self.mode = "SWOOP"
 
     def copy_pose(self, pose):
@@ -371,15 +370,9 @@ class OffboardControl:
         y_increase = 0
         z_increase = 0
 
-        if self.phase == "SEARCH":
-            des_x = self.search_loc[0] 
-            des_y = self.search_loc[1]
-            des_z = self.search_loc[2]
-
-        if self.mode == "ROVER":
-            des_x = self.suv_search_loc[0]
-            des_y = self.suv_search_loc[1]
-            des_z = self.suv_search_loc[2]
+        des_x = self.search_loc[0] 
+        des_y = self.search_loc[1]
+        des_z = self.search_loc[2]
 
 
         while not rospy.is_shutdown():
@@ -388,12 +381,9 @@ class OffboardControl:
                 print("I am here")
                 self.waypointIndex = 0
                 self.sim_ctr += 1     
-            
-            if self.detection_count >= 50:
-                break
 
-            if self.is_ready_to_fly : 
 
+            if self.is_ready_to_fly:
 
                 self.des_pose.pose.position.x = des_x
                 self.des_pose.pose.position.y = des_y
@@ -418,12 +408,12 @@ class OffboardControl:
     
                     if mower_ctr%4 == 0 or mower_ctr == 0:
                         x_increase += 0
-                        y_increase += 10
+                        y_increase += 1
                     if mower_ctr%2 == 0 and mower_ctr%4 != 0:
                         x_increase -= 0
-                        y_increase -= 10
+                        y_increase -= 1
                     if mower_ctr%2 == 1:
-                        x_increase += 3
+                        x_increase += 2
                         y_increase += 0 
 
                     mower_ctr += 1
@@ -490,7 +480,7 @@ class OffboardControl:
 
 
         if self.phase == "SEARCH":
-            self.mode = "PATTERN" # goes to pattern
+            self.mode = "ROVER" # goes to pattern
 
         if self.phase == "DROP":
             print("I am here in DROP")
@@ -516,7 +506,7 @@ class OffboardControl:
         print("In Descent1")
         rate = rospy.Rate(10)  # 10 Hz
         
-        while self.range > 1.8 and not rospy.is_shutdown(): 
+        while self.range > 1 and not rospy.is_shutdown(): 
 
             err_x = self.drop_loc[0] - self.curr_pose.pose.position.x
             err_y = self.drop_loc[1] - self.curr_pose.pose.position.y
@@ -537,26 +527,22 @@ class OffboardControl:
         print("In Descent2")
         rate = rospy.Rate(10)  # 10 Hz
         
-        while self.range > 1 and not rospy.is_shutdown(): 
+        while self.range > 0.8 and not rospy.is_shutdown(): 
 
-            err_x = self.truck_target_x 
+            err_x = self.truck_target_x
             err_y = self.truck_target_y 
 
-            x_change = (err_x * self.KP * 10)
-            y_change = (err_y * self.KP * 10)
+            x_change = (err_x * self.KP * 25)
+            y_change = -(err_y * self.KP * 15)
 
-            des = self.get_descent(x_change, y_change, -0.1)
+            des = self.get_descent(x_change, y_change, -0.3)
             self.vel_pub.publish(des)
             self.x_prev_error = err_x
             self.y_prev_error = err_y
 
-        try:
-            armService = rospy.ServiceProxy('/mavros/cmd/arming', CommandBool)
-            armService(False)
-            self.arm = False
-        except rospy.ServiceException as e:
-            print("Service arm call failed: %s" % e)
-        self.mode = "END"
+            #rate.sleep()
+        self.detach()
+        self.mode = "ROVER"
 
     def descent(self):
         print("In Descent")
@@ -598,9 +584,8 @@ class OffboardControl:
 
     def rover(self):
         print("I am in rover")
-        initial_location = self.drop_loc1
         location = self.suv_search_loc
-        loc = [list(initial_location),
+        loc = [list(location),
         list(location),
         list(location),
         list(location),
@@ -616,7 +601,7 @@ class OffboardControl:
         sim_ctr = 1
         #print(self.mode)
         
-        while self.mode == "ROVER" and sim_ctr<2 and not rospy.is_shutdown():
+        while self.mode == "ROVER" and sim_ctr<=6 and not rospy.is_shutdown():
             print("I am in while loop")
             if waypoint_index == 5:
                 waypoint_index = 0
@@ -646,12 +631,7 @@ class OffboardControl:
             pose_pub.publish(self.des_pose)
             rate.sleep()
         print("Descending for the third time")
-        self.pattern()
         self.descent2()
-        
-        self.mode="END" # I think that works yeah it does
-        #turn off somewhow I forget the command
-
  
 
 
