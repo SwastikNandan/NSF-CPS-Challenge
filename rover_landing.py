@@ -9,7 +9,7 @@ def Rover(self):
 
 	while self.suv_detection >=1 and self.tag_detection < 10:
 
-		x_goal = (self.curr_pose.pose.position.x + self.truck_target_x) + (self.truck_target_y-prev_x) # add x goal based on velocity of travel
+		x_goal = (self.curr_pose.pose.position.x + self.truck_target_x) + (self.truck_target_x-prev_x) # add x goal based on velocity of travel
 		y_goal = (self.curr_pose.pose.position.y + self.truck_target_y) + (self.truck_target_y-prev_y) # add y goal based on velocity of travel
 		z_goal = (self.curr_pose.pose.position.z + self.truck_target_z) + (self.truck_target_z- prev_z)
 		location = [x_goal, y_goal, self.curr_pose.pose.position.z + (10-self.range),0,0,0,0] # z-value will maintain 10 m from ground
@@ -25,7 +25,7 @@ def Rover(self):
 	while self.tag_detection >= 10 and self.range > 0.7:
 
 		tag_error_x = (self.destination_x-self.curr_pose.pose.position.x)
-		tag_error_y = (self.destination_y-self.curr_pose.pose.position.x)
+		tag_error_y = (self.destination_y-self.curr_pose.pose.position.y)
 
 		x_goal = (self.curr_pose.pose.position.x + self.truck_target_x) + (self.truck_target_y-prev_x) + tag_error_x # add x goal based on velocity of travel
 		y_goal = (self.curr_pose.pose.position.y + self.truck_target_y) + tag_error_y # add y goal based on velocity of travel

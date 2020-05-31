@@ -19,7 +19,6 @@ from std_msgs.msg import String, Header
 from sensor_msgs.msg import Range
 import subprocess
 from gazebo_ros_link_attacher.srv import Attach, AttachRequest, AttachResponse
-from darknet_ros_msgs.msg import BoundingBox, BoundingBoxes
 
 class OffboardControl:
 
@@ -30,20 +29,29 @@ class OffboardControl:
                             [-1.8, -2.6, 2, 0, 0, 0, 0],
                             ])
        
-    search_loc = [10,-62, 18, 0, 0, 0, 0]
-    drop_loc = [84.79, -54.25, 27, 0, 0, 0, 0]
+    search_loc = [35, 2, 15, 0, 0, 0, 0]
+    drop_loc = [84.79, -54.25, 25, 0, 0, 0, 0]
+    drop_loc1 = [84.79, -54.25, 26, 0, 0, 0, 0]
 
 
     def __init__(self):
         self.curr_pose = PoseStamped()
+        self.curr_pose_rover = PoseStamped()
         self.cam_img = PoseStamped()
         self.des_pose = PoseStamped()
         self.destination_pose = PoseStamped()
+        self.rover_variable = PositionTarget()
         self.pixel_img = Image()
         self.camera_image = Image()
+        self.rover_location_x = 0
+        self.rover_loaction_y = 0
+        self.rover_location_z = 0
         self.truck_target_x = 0
         self.truck_target_y = 0
         self.truck_target_z = 0
+        self.rover_velocity_x = 0
+        self.rover_velocity_y = 0
+        self.rover_velocity_z = 0
         self.image_target =[]
         self.depth = Image()
         self.KP= .005
@@ -63,7 +71,7 @@ class OffboardControl:
         self.flag = "False"
         self.is_ready_to_fly = False
         self.hover_loc = [self.hover_x, self.hover_y, self.hover_z, 0, 0, 0, 0] # Hovers 3meter above at this location 
-        self.suv_search_loc = [10,-62, 18]
+        self.suv_search_loc = [0, 0, 0, 0, 0, 0, 0]
         self.mode = "FLYTODESTINATION"
         self.phase = "SEARCH"
         self.dist_threshold = 0.4
@@ -75,6 +83,8 @@ class OffboardControl:
         # define ros subscribers and publishers
         rospy.init_node('OffboardControl', anonymous=True)
         self.pose_sub = rospy.Subscriber('uav1/mavros/local_position/pose', PoseStamped, callback=self.pose_callback)
+        self.pose_sub0 = rospy.Subscriber('uav0/mavros/local_position/pose', PoseStamped, callback=self.pose_callback0)
+        self.vel_sub0 = rospy.Subscriber('uav0/mavros/setpoint_raw/local', PositionTarget, callback=self.velocity_callback0) 
         self.state_sub = rospy.Subscriber('uav1/mavros/state', State, callback=self.state_callback)
         self.vel_pub = rospy.Publisher('uav1/mavros/setpoint_raw/local', PositionTarget, queue_size=10)
         #self.attach = rospy.Publisher('/attach', String, queue_size=10)
@@ -83,43 +93,11 @@ class OffboardControl:
         self.pinhole_camera_model = PinholeCameraModel()
         self.pinhole_camera_model_rgb = PinholeCameraModel()
         self.pinhole_camera_model.fromCameraInfo(camera_info)
-        #rospy.Subscriber('/uav_camera/image_raw_down',Image,callback=self.pixel_image, callback_args = '/uav_camera/image_raw_down')
         rospy.Subscriber('/uav_camera_down/image_raw',Image,callback=self.pixel_image)
-        rospy.Subscriber('/camera/depth/image_raw',Image,callback=self.depth_image)
-        rospy.Subscriber('/darknet_ros/bounding_boxes', BoundingBoxes, callback=self.yolo)
-        self.decision = rospy.Subscriber('/data', String, callback=self.set_mode)
+        self.decision = rospy.Subscriber('/data', String, callback=self.set_mode)    # doesnot appear immediately
         self.sonar = rospy.Subscriber('/sonar', Range, callback=self.range_callback)
         self.controller()
 
-
-    def yolo(self,data):
-        for a in data.bounding_boxes:
-            
-            if a.Class == "truck" or a.Class == "bus" or a.Class == "SUV" or a.Class =="kite":
-                
-                self.detection_count = self.detection_count + 1
-                X = a.xmin + (a.xmax - a.xmin)/2
-                Y = a.ymin + (a.ymax - a.ymin)/2
-                #print(a.xmin)
-                #print(X)
-                self.image_target = list(self.pinhole_camera_model.projectPixelTo3dRay(( X, Y )))
-                self.image_target[:] = [x/self.image_target[2] for x in self.image_target] 
-                height = self.range
-
-                self.truck_target_x1 = self.image_target[0]*height
-                self.truck_target_y1 = self.image_target[1]*height
-                self.truck_target_z1 = height
-
-                relative_coordinates = np.array([[self.truck_target_x1],[self.truck_target_y1], [self.truck_target_z1]])
-                hom_transformation = np.array([[0, 1, 0, 0],[1, 0, 0, 0],[ 0, 0, -1, 0],[0, 0, 0, 1]])
-            	homogeneous_coordinates = np.array([[relative_coordinates[0][0]],[relative_coordinates[1][0]],[relative_coordinates[2][0]],[1]])
-            	product =  np.matmul(hom_transformation,homogeneous_coordinates)
-            	self.truck_target_x = -product[0][0]
-                self.truck_target_y = -product[1][0]
-                self.truck_target_z = product[2][0]
-                print('X_coordinate_truck',self.truck_target_x)
-                print('Y_coordinate_truck',self.truck_target_y)
-                print('Z_coordinate_truck',self.truck_target_z)
 
     def depth_image(self,Img):
         self.depth = Img
@@ -232,6 +210,24 @@ class OffboardControl:
         #print('pose_callback')
         self.curr_pose = msg
 
+    def pose_callback0(self,msg):
+    	self.curr_pose_rover = msg
+    	self.rover_location_x = self.curr_pose_rover.pose.position.x
+    	self.rover_location_y = self.curr_pose_rover.pose.position.y
+    	self.rover_location_z = self.curr_pose_rover.pose.position.z
+    	self.suv_search_loc = [self.rover_location_x, self.rover_location_y, self.rover_loaction_z, 0, 0, 0, 0]
+
+
+    def velocity_callback0(self,velocity):
+    	beta = 0.7
+    	self.rover_variable = velocity
+    	self.rover_velocity_x = ((1-beta)*self.rover_variable.velocity.x) + (beta*self.rover_velocity_previous_x)
+    	self.rover_velocity_y = ((1-beta)*self.rover_variable.velocity.y) + (beta*self.rover_velocity_previous_y)
+    	self.rover_velocity_z = ((1-beta)*self.rover_variable.velocity.z) + (beta*self.rover_velocity_previous_z)
+    	self.rover_velocity_previous_x = self.rover_velocity_x
+    	self.rover_velocity_previous_y = self.rover_velocity_y
+    	self.rover_velocity_previous_z = self.rover_velocity_z
+
     def range_callback(self,msg):
         #print(msg)
         self.range = msg.range
@@ -310,13 +306,13 @@ class OffboardControl:
         rate = rospy.Rate(20)
         rate.sleep()
         shape = len(loc)
-        pose_pub = rospy.Publisher('/mavros/setpoint_position/local', PoseStamped, queue_size=10)
+        pose_pub = rospy.Publisher('uav1/mavros/setpoint_position/local', PoseStamped, queue_size=10)
         self.des_pose = self.copy_pose(self.curr_pose)
         waypoint_index = 0
         sim_ctr = 1
         #print(self.mode)
         
-        while self.mode == "HOVER" and self.counter <= 200 and not rospy.is_shutdown():
+        while self.mode == "HOVER" and self.counter <= 70 and not rospy.is_shutdown():
             if waypoint_index == 5:
                 waypoint_index = 0
                 sim_ctr += 1
@@ -344,7 +340,7 @@ class OffboardControl:
 
             pose_pub.publish(self.des_pose)
             rate.sleep()
-        if self.counter > 60:
+        if self.counter > 35:
             self.mode = "SWOOP"
 
     def copy_pose(self, pose):
@@ -358,10 +354,11 @@ class OffboardControl:
 
     def pattern(self):
         print("PATTERN")
-
+        self.sim_ctr = 0
+        self.counter = 0
         rate = rospy.Rate(10)  # Hz
         rate.sleep()
-        pose_pub = rospy.Publisher('/mavros/setpoint_position/local', PoseStamped, queue_size=10)
+        pose_pub = rospy.Publisher('uav1/mavros/setpoint_position/local', PoseStamped, queue_size=10)
         self.des_pose = self.copy_pose(self.curr_pose)
         shape = self.locations.shape
         
@@ -370,9 +367,16 @@ class OffboardControl:
         y_increase = 0
         z_increase = 0
 
-        des_x = self.search_loc[0] 
-        des_y = self.search_loc[1]
-        des_z = self.search_loc[2]
+        if self.phase == "SEARCH":
+            des_x = self.search_loc[0] 
+            des_y = self.search_loc[1]
+            des_z = self.search_loc[2]
+
+        if self.mode == "ROVER":
+            self.sim_ctr = 0
+            des_x = self.suv_search_loc[0]
+            des_y = self.suv_search_loc[1]
+            des_z = self.suv_search_loc[2]
 
 
         while not rospy.is_shutdown():
@@ -383,7 +387,8 @@ class OffboardControl:
                 self.sim_ctr += 1     
 
 
-            if self.is_ready_to_fly:
+            if self.is_ready_to_fly : 
+
 
                 self.des_pose.pose.position.x = des_x
                 self.des_pose.pose.position.y = des_y
@@ -408,12 +413,12 @@ class OffboardControl:
     
                     if mower_ctr%4 == 0 or mower_ctr == 0:
                         x_increase += 0
-                        y_increase += 1
+                        y_increase += 10
                     if mower_ctr%2 == 0 and mower_ctr%4 != 0:
                         x_increase -= 0
-                        y_increase -= 1
+                        y_increase -= 10
                     if mower_ctr%2 == 1:
-                        x_increase += 2
+                        x_increase += 3
                         y_increase += 0 
 
                     mower_ctr += 1
@@ -444,7 +449,7 @@ class OffboardControl:
         rate.sleep()
         waypointidx = 0
         print("Waypointidx",waypointidx)
-        pose_pub = rospy.Publisher('/mavros/setpoint_position/local', PoseStamped, queue_size=10)
+        pose_pub = rospy.Publisher('uav1/mavros/setpoint_position/local', PoseStamped, queue_size=10)
         self.des_pose = self.copy_pose(self.curr_pose)
 
         if self.phase == "SEARCH": #Phase set in the init function
@@ -480,7 +485,7 @@ class OffboardControl:
 
 
         if self.phase == "SEARCH":
-            self.mode = "ROVER" # goes to pattern
+            self.mode = "PATTERN" # goes to pattern
 
         if self.phase == "DROP":
             print("I am here in DROP")
@@ -506,7 +511,7 @@ class OffboardControl:
         print("In Descent1")
         rate = rospy.Rate(10)  # 10 Hz
         
-        while self.range > 1 and not rospy.is_shutdown(): 
+        while self.range > 1.8 and not rospy.is_shutdown(): 
 
             err_x = self.drop_loc[0] - self.curr_pose.pose.position.x
             err_y = self.drop_loc[1] - self.curr_pose.pose.position.y
@@ -523,26 +528,6 @@ class OffboardControl:
         self.detach()
         self.mode = "ROVER"
 
-    def descent2(self):
-        print("In Descent2")
-        rate = rospy.Rate(10)  # 10 Hz
-        
-        while self.range > 0.8 and not rospy.is_shutdown(): 
-
-            err_x = self.truck_target_x
-            err_y = self.truck_target_y 
-
-            x_change = (err_x * self.KP * 25)
-            y_change = -(err_y * self.KP * 15)
-
-            des = self.get_descent(x_change, y_change, -0.3)
-            self.vel_pub.publish(des)
-            self.x_prev_error = err_x
-            self.y_prev_error = err_y
-
-            #rate.sleep()
-        self.detach()
-        self.mode = "ROVER"
 
     def descent(self):
         print("In Descent")
@@ -550,16 +535,11 @@ class OffboardControl:
         attach = False
         
         while self.mode == "SWOOP" and self.range > 0.7 and not rospy.is_shutdown():
-            #print("X target:",self.destination_x)
-            #print("Y target:",self.destination_y)
             err_x = self.destination_x - self.curr_pose.pose.position.x
             err_y = self.destination_y - self.curr_pose.pose.position.y
 
-            x_change = (err_x * self.KP * 50)#-(((err_x - self.x_prev_error) * 70) * self.KD)
-            y_change = -(err_y * self.KP * 100)#-(((err_y - self.y_prev_error) * 70) * self.KD)    
-
-            #x_change = -(err_x * self.KP * 50)#-(((err_x - self.x_prev_error) * 70) * self.KD)
-            #y_change = (err_y * self.KP * 100)#-(((err_y - self.y_prev_error) * 70) * self.KD)
+            x_change = (err_x * self.KP * 50)
+            y_change = -(err_y * self.KP * 100)
 
             des = self.get_descent(x_change, y_change, -0.2)
             self.vel_pub.publish(des)
@@ -568,41 +548,34 @@ class OffboardControl:
 
             #rate.sleep()
 
-        self.attach() # The drone gets attached to the target
-        attach = True
-        if attach == False:
-            print("In no attach")
-            attach = True
-            self.attach.publish("ATTACH")
-            rospy.sleep(0.2)
-
-           # when it attaches it changes the phase and mode again and moves the drone. The logic in fly to destination drops it off
-        if attach == True:
+        if self.phase == "SEARCH":
+            self.attach() # The drone gets attached to the target
             self.phase = "DROP"
             self.mode = "FLYTODESTINATION"
             print("About to break out of descent to fly to destination")
+        if self.mode == "ROVER":
+          print("End Here")
+          self.mode = "END"
 
     def rover(self):
         print("I am in rover")
+        initial_location = self.drop_loc1
         location = self.suv_search_loc
-        loc = [list(location),
-        list(location),
-        list(location),
-        list(location),
+        loc = [list(initial_location),
         list(location)]
         print(loc)
 
         rate = rospy.Rate(10)
         rate.sleep()
         shape = len(loc)
-        pose_pub = rospy.Publisher('/mavros/setpoint_position/local', PoseStamped, queue_size=10)
+        pose_pub = rospy.Publisher('uav1/mavros/setpoint_position/local', PoseStamped, queue_size=10)
         self.des_pose = self.copy_pose(self.curr_pose)
         waypoint_index = 0
         sim_ctr = 1
         #print(self.mode)
         
-        while self.mode == "ROVER" and sim_ctr<=6 and not rospy.is_shutdown():
-            print("I am in while loop")
+        while self.mode == "ROVER" and sim_ctr<2 and not rospy.is_shutdown():
+            #print("I am in while loop")
             if waypoint_index == 5:
                 waypoint_index = 0
                 sim_ctr += 1
@@ -630,9 +603,87 @@ class OffboardControl:
 
             pose_pub.publish(self.des_pose)
             rate.sleep()
-        print("Descending for the third time")
-        self.descent2()
- 
+		self.square()
+
+	def square(self):
+		center_x = self.rover_location_x
+		center_y = self.rover_location_y
+		center_z = self.rover_location_z 
+        print("PATTERN")
+        self.sim_ctr = 0
+        self.counter = 0
+        rate = rospy.Rate(10)  # Hz
+        rate.sleep()
+        pose_pub = rospy.Publisher('uav1/mavros/setpoint_position/local', PoseStamped, queue_size=10)
+        self.des_pose = self.copy_pose(self.curr_pose)
+        shape = self.locations.shape
+        
+        mower_ctr = 0
+        x_increase = 0
+        y_increase = 0
+        z_increase = 0
+
+        while not rospy.is_shutdown():
+           
+            if self.waypointIndex is shape[0]:
+                print("I am here")
+                self.waypointIndex = 0
+                self.sim_ctr += 1     
+
+
+            if self.is_ready_to_fly : 
+
+
+                self.des_pose.pose.position.x = des_x
+                self.des_pose.pose.position.y = des_y
+                self.des_pose.pose.position.z = des_z
+                self.des_pose.pose.orientation.x = 0 
+                self.des_pose.pose.orientation.y = 0
+                self.des_pose.pose.orientation.z = 0 
+                self.des_pose.pose.orientation.w = 0 
+                curr_x = self.curr_pose.pose.position.x
+                curr_y = self.curr_pose.pose.position.y
+                curr_z = self.curr_pose.pose.position.z
+                x_increase = 0
+                y_increase = 0
+                z_increase = 0
+
+
+                dist = math.sqrt((curr_x - des_x)*(curr_x - des_x) + (curr_y - des_y)*(curr_y - des_y) + (curr_z - des_z)*(curr_z - des_z))
+       
+
+                if dist < self.dist_threshold:
+                    self.waypointIndex += 1
+    
+                    if mower_ctr%4 == 0 or mower_ctr == 0:
+                        x_increase += 0
+                        y_increase += 10
+                    if mower_ctr%2 == 0 and mower_ctr%4 != 0:
+                        x_increase -= 0
+                        y_increase -= 10
+                    if mower_ctr%2 == 1:
+                        x_increase += 3
+                        y_increase += 0 
+
+                    mower_ctr += 1
+
+                    des_x = self.curr_pose.pose.position.x + x_increase 
+                    des_y = self.curr_pose.pose.position.y + y_increase 
+
+            
+            z_increase = 5 - self.range # The integer value is chose such that the drone maintins the same value in units from the ground
+            des_z = self.curr_pose.pose.position.z + z_increase 
+            pose_pub.publish(self.des_pose)
+            rate.sleep()
+            # When it breaks here it should change to descend
+            if self.counter >= 40:
+                self.mode = "HOVER"
+                self.hover_x = self.curr_pose.pose.position.x
+                self.hover_y = self.curr_pose.pose.position.y
+                self.hover_z = self.curr_pose.pose.position.z
+                self.hover_loc = [self.hover_x, self.hover_y, self.hover_z, 0, 0, 0, 0]
+                rate.sleep()
+                break
 
 
     def controller(self):
