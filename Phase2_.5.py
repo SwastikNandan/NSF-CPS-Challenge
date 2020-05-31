@@ -98,6 +98,34 @@ class OffboardControl:
         self.sonar = rospy.Subscriber('/sonar', Range, callback=self.range_callback)
         self.controller()
 
+    def yolo(self,data):
+        for a in data.bounding_boxes:
+            
+            if a.Class == "truck" or a.Class == "bus" or a.Class == "SUV" or a.Class =="kite":
+                
+                self.detection_count = self.detection_count + 1
+                X = a.xmin + (a.xmax - a.xmin)/2
+                Y = a.ymin + (a.ymax - a.ymin)/2
+                #print(a.xmin)
+                #print(X)
+                self.image_target = list(self.pinhole_camera_model.projectPixelTo3dRay(( X, Y )))
+                self.image_target[:] = [x/self.image_target[2] for x in self.image_target] 
+                height = self.range
+
+                self.truck_target_x1 = self.image_target[0]*height
+                self.truck_target_y1 = self.image_target[1]*height
+                self.truck_target_z1 = height
+
+                relative_coordinates = np.array([[self.truck_target_x1],[self.truck_target_y1], [self.truck_target_z1]])
+                hom_transformation = np.array([[0, 1, 0, 0],[1, 0, 0, 0],[ 0, 0, -1, 0],[0, 0, 0, 1]])
+            	homogeneous_coordinates = np.array([[relative_coordinates[0][0]],[relative_coordinates[1][0]],[relative_coordinates[2][0]],[1]])
+            	product =  np.matmul(hom_transformation,homogeneous_coordinates)
+            	self.truck_target_x = -product[0][0]
+                self.truck_target_y = -product[1][0]
+                self.truck_target_z = product[2][0]
+                #print('X_coordinate_truck',self.truck_target_x)
+                #print('Y_coordinate_truck',self.truck_target_y)
+                #print('Z_coordinate_truck',self.truck_target_z)
 
     def depth_image(self,Img):
         self.depth = Img
@@ -507,6 +535,26 @@ class OffboardControl:
 
         return des_vel
 
+
+    def descent2(self):
+        print("In Descent2")
+        rate = rospy.Rate(10)  # 10 Hz
+        
+        while self.range > 1.8 and not rospy.is_shutdown(): 
+
+            err_x = self.truck_target_x - self.curr_pose.pose.position.x
+            err_y = self.truck_target_y - self.curr_pose.pose.position.y
+            err_z = self.truck_target_z - self.curr_pose.pose.position.z
+
+            x_change = (err_x * self.KP * 50 + self.rover_velocity_x )
+            y_change = -(err_y * self.KP * 100 + self.rover_velocity_y )
+
+            des = self.get_descent(x_change, y_change, -0.2)
+            self.vel_pub.publish(des)
+            self.x_prev_error = err_x
+            self.y_prev_error = err_y
+
+
     def descent1(self):
         print("In Descent1")
         rate = rospy.Rate(10)  # 10 Hz
@@ -609,7 +657,6 @@ class OffboardControl:
 		center_x = self.rover_location_x
 		center_y = self.rover_location_y
 		center_z = self.rover_location_z 
-        print("PATTERN")
         self.sim_ctr = 0
         self.counter = 0
         rate = rospy.Rate(10)  # Hz
@@ -676,12 +723,8 @@ class OffboardControl:
             pose_pub.publish(self.des_pose)
             rate.sleep()
             # When it breaks here it should change to descend
-            if self.counter >= 40:
-                self.mode = "HOVER"
-                self.hover_x = self.curr_pose.pose.position.x
-                self.hover_y = self.curr_pose.pose.position.y
-                self.hover_z = self.curr_pose.pose.position.z
-                self.hover_loc = [self.hover_x, self.hover_y, self.hover_z, 0, 0, 0, 0]
+            if self.detection_count >= 6:                   # Not waiting too long for more detections as the rover moves out of sight
+            	self.descent2()
                 rate.sleep()
                 break
 
