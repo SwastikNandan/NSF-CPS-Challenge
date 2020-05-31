@@ -93,6 +93,7 @@ class OffboardControl:
         self.pinhole_camera_model = PinholeCameraModel()
         self.pinhole_camera_model_rgb = PinholeCameraModel()
         self.pinhole_camera_model.fromCameraInfo(camera_info)
+        rospy.Subscriber('/darknet_ros/bounding_boxes', BoundingBoxes, callback=self.yolo)
         rospy.Subscriber('/uav_camera_down/image_raw',Image,callback=self.pixel_image)
         self.decision = rospy.Subscriber('/data', String, callback=self.set_mode)    # doesnot appear immediately
         self.sonar = rospy.Subscriber('/sonar', Range, callback=self.range_callback)
@@ -127,8 +128,6 @@ class OffboardControl:
                 #print('Y_coordinate_truck',self.truck_target_y)
                 #print('Z_coordinate_truck',self.truck_target_z)
 
-    def depth_image(self,Img):
-        self.depth = Img
 
     def pixel_image(self,img):
         self.camera_image = img
@@ -656,7 +655,11 @@ class OffboardControl:
 	def square(self):
 		center_x = self.rover_location_x
 		center_y = self.rover_location_y
-		center_z = self.rover_location_z 
+		center_z = self.rover_location_z
+		des_x = center_x - 5
+		des_y = center_y - 35 
+		des_z = center_z + 10 
+		# We gotta staert from here
         self.sim_ctr = 0
         self.counter = 0
         rate = rospy.Rate(10)  # Hz
@@ -702,15 +705,12 @@ class OffboardControl:
                 if dist < self.dist_threshold:
                     self.waypointIndex += 1
     
-                    if mower_ctr%4 == 0 or mower_ctr == 0:
-                        x_increase += 0
-                        y_increase += 10
-                    if mower_ctr%2 == 0 and mower_ctr%4 != 0:
-                        x_increase -= 0
-                        y_increase -= 10
-                    if mower_ctr%2 == 1:
-                        x_increase += 3
-                        y_increase += 0 
+                    if mower_ctr%2 == 0:
+                        x_increase -= 0 # x change
+                    else:
+                    	x_increase += 0 # x change
+
+                    y_increase = 10
 
                     mower_ctr += 1
 
@@ -718,7 +718,7 @@ class OffboardControl:
                     des_y = self.curr_pose.pose.position.y + y_increase 
 
             
-            z_increase = 5 - self.range # The integer value is chose such that the drone maintins the same value in units from the ground
+            z_increase = 15 - self.range # The integer value is chose such that the drone maintins the same value in units from the ground
             des_z = self.curr_pose.pose.position.z + z_increase 
             pose_pub.publish(self.des_pose)
             rate.sleep()
