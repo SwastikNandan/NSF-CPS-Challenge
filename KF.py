@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import rospy
 #from geopy.geocoders import utm
 import numpy as np
@@ -7,9 +8,10 @@ from numpy.linalg import inv
 from sensor_msgs.msg import NavSatFix, Imu, CameraInfo, RegionOfInterest, Image
 from tf.transformations import euler_from_quaternion
 from nav_msgs.msg import Odometry
+from cps_challenge_2020.msg import gps_kf
 
 
-class OffboardControl:
+class KalmanFilter:
     print("I am in offboard")
     def mavrosTopicStringRoot(self, uavID=0):
         mav_topic_string = 'uav' + str(uavID) + '/mavros/'
@@ -48,10 +50,11 @@ class OffboardControl:
         self.X_x = []
         self.X_y = []
         self.X_z = []
-        rospy.init_node('OffboardControl', anonymous=True)
-        rospy.Subscriber('/uav1/mavros/global_position/raw/fix',NavSatFix, callback=self.navsat)
-        rospy.Subscriber('/uav1/mavros/imu/data', Imu, callback=self.rover_imu)
+        rospy.init_node('KalmanFilter', anonymous=True)
+        rospy.Subscriber('/uav0/mavros/global_position/raw/fix',NavSatFix, callback=self.navsat)
+        rospy.Subscriber('/uav0/mavros/imu/data', Imu, callback=self.rover_imu)
         rospy.Subscriber('/odom',Odometry, callback=self.rover_odometry)
+        self.pub = rospy.Publisher('kf_coords', gps_kf)
         self.KF()
 
     def rover_odometry(self,data):
@@ -75,11 +78,12 @@ class OffboardControl:
         latitude = data.latitude
         longitude = data.longitude
         self.height = data.altitude
+        #print(latitude, longitude)
         #UTM = utm.from_latlon(latitude,longitude)
-        myProj = Proj("+proj=utm +zone=23K, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
+        myProj = Proj("+proj=utm +zone=25K, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
         self.UTMy, self.UTMx = myProj(longitude, latitude)
-        #print(self.UTMx)
-        #print(self.UTMy)
+        #print("UTMx to check if the rover GPS is changing",self.UTMx)
+        #print("UTMy to check if the rover GPS is changing",self.UTMy)
 
     def rover_imu(self,data):
         self.rover_orientation_x = data.orientation.x
@@ -119,6 +123,8 @@ class OffboardControl:
         error_obs_vy = 0.5
         error_obs_z = 0.5
         error_obs_vz = 0.5
+        msg = gps_kf()
+        rate = rospy.Rate(50)
 
         def prediction2d(x, vx, ax, y, vy, ay, z, vz, az):
 
@@ -158,7 +164,7 @@ class OffboardControl:
             data_x = self.UTMx - 7822938.26187
             data_y = (self.UTMy + 5927808.12211)*(-1)
             data_z = self.height - 462.785
-            print("GPS x:", data_x, "GPS y:", data_y, "GPS z:", data_z)
+            #print("GPS x:", data_x, "GPS y:", data_y, "GPS z:", data_z)
             ax = self.rover_linacc_x
             ay = self.rover_linacc_y
             az = self.rover_linacc_z
@@ -184,11 +190,24 @@ class OffboardControl:
             self.X_y = self.X_y + K_y.dot(Y_y - H.dot(self.X_y))
             self.X_z = self.X_z + K_z.dot(Y_z - H.dot(self.X_z))
             #print(self.X_x)
+
+
+            msg.X_x = self.X_x
+            msg.X_y = self.X_y
+            msg.X_z = self.X_z
+            rospy.loginfo(msg)
+            self.pub.publish(msg)
+            rate.sleep()
+
             P_x = (np.identity(len(K_x)) - K_x.dot(H)).dot(P_x)
             P_y = (np.identity(len(K_y)) - K_y.dot(H)).dot(P_y)
             P_z = (np.identity(len(K_z)) - K_z.dot(H)).dot(P_z)
+
+
 if __name__=="__main__":
-    OffboardControl()
+    try:
+        KalmanFilter()
+    except rospy.ROSInterruptException: pass
 
 
 

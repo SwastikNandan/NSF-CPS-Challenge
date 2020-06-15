@@ -8,15 +8,19 @@ import numpy as np
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, TransformStamped, PoseArray
 import nav_msgs
 from nav_msgs.msg import Odometry
+from pyproj import Proj
+from numpy.linalg import inv
 from sensor_msgs.msg import CameraInfo, RegionOfInterest, Image
 from image_geometry import PinholeCameraModel
 from mavros_msgs.srv import SetMode, CommandBool
 from cv_bridge import CvBridge, CvBridgeError
 from std_msgs.msg import String, Header
-from sensor_msgs.msg import Range
+from sensor_msgs.msg import Range, NavSatFix, Imu, CameraInfo, RegionOfInterest, Image
+from tf.transformations import euler_from_quaternion
 import subprocess
 from gazebo_ros_link_attacher.srv import Attach, AttachRequest, AttachResponse
 from darknet_ros_msgs.msg import BoundingBox, BoundingBoxes
+from cps_challenge_2020.msg import gps_kf
 
 class OffboardControl:
 
@@ -108,6 +112,7 @@ class OffboardControl:
         rospy.Subscriber('/uav_camera_down/image_raw',Image,callback=self.pixel_image)
         self.decision = rospy.Subscriber('/data', String, callback=self.set_mode)    # doesnot appear immediately
         self.sonar = rospy.Subscriber('/sonar', Range, callback=self.range_callback)
+        self.kalman_filter = rospy.Subscriber('/kf_coords', gps_kf, callback=self.kf_callback)
 
         NUM_UAV = 2
         mode_proxy = [None for i in range(NUM_UAV)]
@@ -118,6 +123,7 @@ class OffboardControl:
             arm_proxy[uavID] = rospy.ServiceProxy(self.mavrosTopicStringRoot(uavID) + '/cmd/arming', CommandBool)
 
         self.controller()
+
 
     def yolo(self,data):
         for a in data.bounding_boxes:
@@ -334,6 +340,13 @@ class OffboardControl:
     def range_callback(self,msg):
         #print(msg)
         self.range = msg.range
+
+    def kf_callback(self,msg):
+        self.X_x = msg.X_x
+        self.X_y = msg.X_y
+        self.X_z = msg.X_z
+
+        #print(self.X_x, self.X_y, self.X_z)
 
     def state_callback(self, msg):
         #print('state_callback')
@@ -594,7 +607,7 @@ class OffboardControl:
             	print("InBreak")
             	break
 
-            if self.counter >= 30 and self.mode == "PROBE":
+            if self.counter >= 5 and self.mode == "PROBE":
                 print("Breaking from the counter")
                 self.hover_x = self.curr_pose.pose.position.x
                 self.hover_y = self.curr_pose.pose.position.y
