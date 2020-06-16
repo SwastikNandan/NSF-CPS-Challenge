@@ -50,6 +50,7 @@ class KalmanFilter:
         self.X_x = []
         self.X_y = []
         self.X_z = []
+        self.count =0
         rospy.init_node('KalmanFilter', anonymous=True)
         rospy.Subscriber('/uav0/mavros/global_position/raw/fix',NavSatFix, callback=self.navsat)
         rospy.Subscriber('/uav0/mavros/imu/data', Imu, callback=self.rover_imu)
@@ -60,16 +61,19 @@ class KalmanFilter:
     def rover_odometry(self,data):
          
         self.rover_linear_velocity = data.twist.twist.linear
+        #print(self.rover_linear_velocity)
         self.rover_angular_velocity = data.twist.twist.angular
         self.rover_linvel_x_uncorrected = self.rover_linear_velocity.x
         self.rover_linvel_y_uncorrected = self.rover_linear_velocity.y
         self.rover_linvel_z_uncorrected = self.rover_linear_velocity.z
-        rot_z_to_global = np.array([[math.cos(-1.57), -math.sin(-1.57), 0],[math.sin(-1.57), math.cos(-1.57), 0], [0, 0, 1]])
-        row_vector = np.array([self.rover_linvel_x, self.rover_linvel_y, self.rover_linvel_z])
+        rot_z_to_global = np.array([[0, 1, 0],[0, 0, 1],[1, 0, 0]])
+        row_vector = np.array([self.rover_linvel_x_uncorrected, self.rover_linvel_y_uncorrected, self.rover_linvel_z_uncorrected])
         multiplication = np.matmul(rot_z_to_global,row_vector.T)
         self.rover_linvel_x = multiplication[0]
         self.rover_linvel_y = multiplication[1]
-        self.rover_linvel_z = multiplication[2] 
+        self.rover_linvel_z = multiplication[2]
+        #print("Corrected x velocity",self.rover_linvel_x)
+        #print("Corrected y velocity",self.rover_linvel_y) 
         #self.T_base2world = self.tfROS.fromTranslationRotation((self.rover_linvel_x, self.rover_linvel_y, self.rover_linvel_z),(0, 0, 0, 0))
         #self.T_camera2world = np.matmul(self.T_base2world,self.T_camera2base)
 
@@ -80,8 +84,8 @@ class KalmanFilter:
         self.height = data.altitude
         #print(latitude, longitude)
         #UTM = utm.from_latlon(latitude,longitude)
-        myProj = Proj("+proj=utm +zone=25K, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
-        self.UTMy, self.UTMx = myProj(longitude, latitude)
+        myProj = Proj("+proj=utm +zone=11S, +north +ellps=WGS84 +datum=WGS84 +units=m +no_defs")
+        self.UTMx, self.UTMy = myProj(longitude, latitude)
         #print("UTMx to check if the rover GPS is changing",self.UTMx)
         #print("UTMy to check if the rover GPS is changing",self.UTMy)
 
@@ -101,6 +105,32 @@ class KalmanFilter:
 
 
     def KF(self):
+
+        def prediction2d(x, vx, ax, y, vy, ay, z, vz, az):
+            #print("I am in prediction")
+            self.count = self.count + 1
+            A_x = np.array([[1,self.timestep],[0,1]])
+            X_x = np.array([[x],[vx]])    
+            B_x = np.array([[0.5*self.timestep**2],[self.timestep]])
+            X_prime_x = A_x.dot(X_x) + B_x.dot(ax)
+
+            A_y = np.array([[1,self.timestep],[0,1]])
+            X_y = np.array([[y],[vy]])
+            B_y = np.array([[0.5*self.timestep**2],[self.timestep]])
+            X_prime_y = A_y.dot(X_y) + B_y.dot(ay)
+
+            A_z = np.array([[1,self.timestep],[0,1]])
+            X_z = np.array([[z],[vz]])
+            B_z = np.array([[0.5*self.timestep**2],[self.timestep]])
+            X_prime_z = A_y.dot(X_z) + B_y.dot(az)
+
+            return X_prime_x, X_prime_y, X_prime_z
+
+        def covariance2d(sigma1,sigma2):
+            cov1_2 = sigma1*sigma2
+            cov2_1 = sigma2*sigma1
+            cov_matrix = np.array([[sigma1**2,cov1_2],[cov2_1,sigma2**2]])
+            return np.diag(np.diag(cov_matrix))
 
         x = 0
         vx = self.rover_linvel_x
@@ -125,32 +155,6 @@ class KalmanFilter:
         error_obs_vz = 0.5
         msg = gps_kf()
         rate = rospy.Rate(50)
-
-        def prediction2d(x, vx, ax, y, vy, ay, z, vz, az):
-
-            A_x = np.array([[1,self.timestep],[0,1]])
-            X_x = np.array([[x],[vx]])    
-            B_x = np.array([[0.5*self.timestep**2],[self.timestep]])
-            X_prime_x = A_x.dot(X_x) + B_x.dot(ax)
-
-            A_y = np.array([[1,self.timestep],[0,1]])
-            X_y = np.array([[y],[vy]])
-            B_y = np.array([[0.5*self.timestep**2],[self.timestep]])
-            X_prime_y = A_y.dot(X_y) + B_y.dot(ay)
-
-            A_z = np.array([[1,self.timestep],[0,1]])
-            X_z = np.array([[z],[vz]])
-            B_z = np.array([[0.5*self.timestep**2],[self.timestep]])
-            X_prime_z = A_y.dot(X_z) + B_y.dot(az)
-
-            return X_prime_x, X_prime_y, X_prime_z
-
-        def covariance2d(sigma1,sigma2):
-            cov1_2 = sigma1*sigma2
-            cov2_1 = sigma2*sigma1
-            cov_matrix = np.array([[sigma1**2,cov1_2],[cov2_1,sigma2**2]])
-            return np.diag(np.diag(cov_matrix))
-
         P_x = covariance2d(error_est_x, error_est_vx)
         P_y = covariance2d(error_est_y, error_est_vy)
         P_z = covariance2d(error_est_z, error_est_vz)
@@ -158,50 +162,84 @@ class KalmanFilter:
         A_y = np.array([[1,self.timestep],[0,1]])
         A_z = np.array([[1,self.timestep],[0,1]])
         self.X_x = np.array([[x],[vx]])
+        #print(self.X_x)
         self.X_y = np.array([[y],[vy]])
         self.X_z = np.array([[z],[vz]])
+
+        #self.X_x = np.squeeze(np.asarray(self.X_x))
+        #self.X_y = np.squeeze(np.asarray(self.X_y))
+        #self.X_z = np.squeeze(np.asarray(self.X_z))
         while not rospy.is_shutdown():
-            data_x = self.UTMx - 7822938.26187
-            data_y = (self.UTMy + 5927808.12211)*(-1)
+            if self.UTMx == 0:
+                data_x = 0
+            else:
+                data_x = self.UTMx - (372232.32)
+
+            if self.UTMy == 0:
+                data_y = 0
+            else:
+                data_y = self.UTMy - 4146889.20
             data_z = self.height - 462.785
-            #print("GPS x:", data_x, "GPS y:", data_y, "GPS z:", data_z)
             ax = self.rover_linacc_x
             ay = self.rover_linacc_y
             az = self.rover_linacc_z
+            #print(self.X_x)
+            #self.X_x, self.X_y, self.X_z = prediction2d(self.X_x[0],self.X_x[1],ax,self.X_y[0],self.X_y[1],ay,self.X_z[0],self.X_z[1],az)            
             self.X_x, self.X_y, self.X_z = prediction2d(self.X_x[0][0],self.X_x[1][0],ax,self.X_y[0][0],self.X_y[1][0],ay,self.X_z[0][0],self.X_z[1][0],az)
+            #print(self.X_x)
             P_x = np.diag(np.diag(A_x.dot(P_x).dot(A_x.T)))
             P_y = np.diag(np.diag(A_y.dot(P_y).dot(A_y.T)))
             P_z = np.diag(np.diag(A_z.dot(P_z).dot(A_z.T)))
             H = np.array([1,0])
-            #print(H)
             R_x = covariance2d(error_obs_x,error_obs_vx)
             R_y = covariance2d(error_obs_y,error_obs_vy)
             R_z = covariance2d(error_obs_z,error_obs_vz)
+            #print(R_x)
             S_x = H.dot(P_x).dot(H.T) + R_x
             S_y = H.dot(P_y).dot(H.T) + R_y
             S_z = H.dot(P_z).dot(H.T) + R_z
             K_x = P_x.dot(H).dot(inv(S_x))
+            #print(K_x)
             K_y = P_y.dot(H).dot(inv(S_y))
             K_z = P_z.dot(H).dot(inv(S_z))
+            gps_array_x = np.array([data_x, 0])
+            gps_array_y = np.array([data_y, 0])
+            gps_array_z = np.array([data_z, 0])
+            #print(data_x)
             Y_x = H.dot(data_x)
             Y_y = H.dot(data_y)
             Y_z = H.dot(data_z)
-            self.X_x = self.X_x + K_x.dot(Y_x - H.dot(self.X_x))
-            self.X_y = self.X_y + K_y.dot(Y_y - H.dot(self.X_y))
-            self.X_z = self.X_z + K_z.dot(Y_z - H.dot(self.X_z))
+            #print(self.X_x.transpose())
+            #self.X_x = np.squeeze(np.asarray(self.X_x))
+            #self.X_y = np.squeeze(np.asarray(self.X_y))
+            #self.X_z = np.squeeze(np.asarray(self.X_z))
             #print(self.X_x)
+            M_x = H.dot(self.X_x)
+            M_y = H.dot(self.X_y)
+            M_z = H.dot(self.X_z)
 
+            #print(Y_x)
+            self.X_x = self.X_x + K_x.dot(Y_x - np.array([M_x[0],0]))
+            #if self.count <= 10:
+            #    print(self.UTMx)
+            #    print("Y_x:",Y_x)
+            #    print(self.X_x)
+            #    print(H)
+            #    print("M_x:", np.array([M_x[0],0]))
+            #    print("Y_x - M_x:",Y_x - np.array([M_x[0],0]),"------------------------------")
+            self.X_y = self.X_y + K_y.dot(Y_y - np.array([M_y[0],0]))
+            self.X_z = self.X_z + K_z.dot(Y_z - np.array([M_y[0],0]))
+            print(self.X_y)
+            #P_x = (np.identity(len(K_x)) - K_x.dot(H)).dot(P_x)
+            #P_y = (np.identity(len(K_y)) - K_y.dot(H)).dot(P_y)
+            #P_z = (np.identity(len(K_z)) - K_z.dot(H)).dot(P_z)
 
             msg.X_x = self.X_x
             msg.X_y = self.X_y
             msg.X_z = self.X_z
-            rospy.loginfo(msg)
+            #rospy.loginfo(msg)
             self.pub.publish(msg)
             rate.sleep()
-
-            P_x = (np.identity(len(K_x)) - K_x.dot(H)).dot(P_x)
-            P_y = (np.identity(len(K_y)) - K_y.dot(H)).dot(P_y)
-            P_z = (np.identity(len(K_z)) - K_z.dot(H)).dot(P_z)
 
 
 if __name__=="__main__":
