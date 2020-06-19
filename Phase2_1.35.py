@@ -524,7 +524,7 @@ class OffboardControl:
             rate.sleep()
 
 
-    def pattern(self, hover_dist, start_loc, threshold = 0.3):
+    def pattern(self, hover_dist, start_loc, threshold = 0.3, second_run = False):
         print("PATTERN")
         #print(self.mode)
         self.sim_ctr = 0
@@ -597,22 +597,28 @@ class OffboardControl:
 
                     if self.mode == "ROVER":
                         des_x = self.X_x[0] + (self.rover_velocity_x)
-                        des_y = self.X_y[0] - (self.rover_velocity_y)
+                        des_y = self.X_y[0] + (5*self.rover_velocity_y)
 
-                        print(des_x,des_y)
+                        #print(des_x,des_y)
 
             #print("Detection Count:", self.detection_count)
+
             z_increase = hover_dist - self.range # The integer value is chose such that the drone maintins the same value in units from the ground
+            print(z_increase)
             des_z = self.curr_pose.pose.position.z + z_increase 
             pose_pub.publish(self.des_pose)
             rate.sleep()
 
-            if self.range < 0.8 and self.mode =="DROP":
+            if self.range < 3.5 and self.mode =="DROP":
             	break
 
             if self.detection_count >= 45 and self.mode =="ROVER":
             	print("InBreak")
             	break
+
+            if self.mode == "ROVER" and self.range < 10 and second_run == True:
+                print("Break second call")
+                break
 
             if self.counter >= 25 and self.mode == "PROBE":
                 print("Breaking from the counter")
@@ -647,11 +653,11 @@ class OffboardControl:
                 err_x = self.truck_target_x
                 err_y = self.truck_target_y
 
-                x_change = (err_x * self.KP * 50) + (self.rover_velocity_x/5) #8.5
+                x_change = (err_x * self.KP * 50) + (self.rover_velocity_x/1.5) #8.5
                 #print("rover velocity", self.rover_velocity_x )
-                y_change = -(err_y * self.KP * 100) - (self.rover_velocity_y/5) #8.6
+                y_change = -(err_y * self.KP * 100) - (2*self.rover_velocity_y) #8.6
                   
-                des = self.get_descent(x_change, y_change, -1)
+                des = self.get_descent(x_change, y_change, -0.8)
                 self.vel_pub.publish(des)
 
             if self.mode == "ROVER" and trunk_bool == True:
@@ -660,12 +666,14 @@ class OffboardControl:
                 err_x = self.destination_x - self.curr_pose.pose.position.x
                 err_y = self.destination_y - self.curr_pose.pose.position.y
 
-                x_change = (err_x * self.KP * 50) + (1.5*self.rover_velocity_x/5) #8.5
+                x_change = (err_x * self.KP * 50) + (self.rover_velocity_x/1.5) #8.5
                 #print("rover velocity", self.rover_velocity_x )
-                y_change = -(err_y * self.KP * 100) - (0.9*self.rover_velocity_y/5) #8.6
+                y_change = -(err_y * self.KP * 100) - (1.8*self.rover_velocity_y) #8.6
                   
-                des = self.get_descent(x_change, y_change, -1)
+                des = self.get_descent(x_change, y_change, -0.8)
                 self.vel_pub.publish(des)
+
+        #rate.sleep()
                 # des_x = self.destination_x + (self.rover_velocity_x*7.5) #10
                 # des_y = self.destination_y + (self.rover_velocity_y*7.5) #10
                 # des_z = self.rover_location_z + delta_z 
@@ -698,19 +706,21 @@ class OffboardControl:
             if self.mode == "DROP":
                 print("In Drop")
                 self.flytodestination(self.drop_loc)
-                self.pattern(0.5,self.drop_loc)
+                self.pattern(3,self.drop_loc)
                 self.detach()
                 self.mode = "ROVER"
             if self.mode == "ROVER":
-                #self.flytodestination([0, 0, 10, 0, 0, 0, 0])
+                #self.flytodestination([0, 0, 15, 0, 0, 0, 0])
                 location = [self.X_x[0], self.X_y[0], self.X_z[0]]
-                print(location)
+                #print(location)
                 self.pattern(8,location,1)
+                location = [self.X_x[0], self.X_y[0], self.X_z[0]]
+                self.pattern(8,location,1,True)
                 self.descent(3,-0.75)
                 self.descent(0.5,-0.4,True)
                 self.mode = "END"
-                rospy.sleep()
-                rospy.end()
+                #rospy.sleep()
+                #rospy.end()
 
 if __name__ == "__main__":
     OffboardControl()
